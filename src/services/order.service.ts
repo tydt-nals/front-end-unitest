@@ -1,54 +1,72 @@
-import { Order } from '../models/order.model';
+import { Coupon, Order } from '../models/order.model';
+import { HttpClient } from './http.service';
 import { PaymentService } from './payment.service';
 
-
 export class OrderService {
-  constructor(private readonly paymentService: PaymentService) {}
+  constructor(
+    private readonly paymentService: PaymentService,
+    private readonly httpClient: HttpClient
+  ) { }
 
   async process(order: Partial<Order>) {
-    if (!order.items?.length) {
-      throw new Error('Order items are required');
-    }
-
-    if (order.items.some(item => item.price <= 0 || item.quantity <= 0)) {
-      throw new Error('Order items are invalid');
-    }
-
-    let totalPrice = order.items.reduce((acc, item) => acc + item.price * item.quantity, 0);
-
-    if (totalPrice <= 0) {
-      throw new Error('Total price must be greater than 0');
-    }
-
-    if (order.couponId) {
-      const response = await fetch(`https://67eb7353aa794fb3222a4c0e.mockapi.io/coupons/${order.couponId}`)
-      const coupon = await response.json();
-
-      if (!coupon) {
-        throw new Error('Invalid coupon');
-      }
-
-      totalPrice -= coupon.discount;
-
-      if (totalPrice < 0) {
-        totalPrice = 0;
-      }
-    }
-
+    const totalPrice = await this.calculateTotalPrice(order);
+    const paymentMethod = this.paymentService.buildPaymentMethod(totalPrice);
     const orderPayload = {
       ...order,
       totalPrice,
-      paymentMethod: this.paymentService.buildPaymentMethod(totalPrice),
-    }
+      paymentMethod,
+    };
 
-    const orderResponse = await fetch('https://67eb7353aa794fb3222a4c0e.mockapi.io/order', {
-      method: 'POST',
-      body: JSON.stringify(orderPayload),
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    const createdOrder = await orderResponse.json();
+    const createdOrder = await this.createOrder(orderPayload);
 
     this.paymentService.payViaLink(createdOrder);
+  }
+
+  private async calculateTotalPrice(order: Partial<Order>): Promise<number> {
+    const orderItems = order.items || [];
+    if (!orderItems.length) {
+      throw new Error('Order items are required');
+    }
+
+    if (orderItems.some((item) => item.price <= 0 || item.quantity <= 0)) {
+      throw new Error('Order items are invalid');
+    }
+
+    const totalPrice = orderItems.reduce(
+      (acc, item) => acc + item.price * item.quantity,
+      0
+    );
+
+    if (!order.couponId) return totalPrice;
+
+    const coupon = await this.fetchCoupon(order.couponId);
+    if (!coupon) {
+      throw new Error('Failed to fetch coupon');
+    }
+
+    return Math.max(totalPrice - coupon.discount, 0);
+  }
+
+  private async fetchCoupon(couponId: string): Promise<Coupon | null> {
+    try {
+      const coupon = await this.httpClient.get<Coupon>(
+        `https://67eb7353aa794fb3222a4c0e.mockapi.io/coupons/${couponId}`
+      );
+
+      return coupon ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async createOrder(orderPayload: Partial<Order>): Promise<Order> {
+    try {
+      return await this.httpClient.post<Order>(
+        'https://67eb7353aa794fb3222a4c0e.mockapi.io/order',
+        orderPayload
+      );
+    } catch {
+      throw new Error('Failed to create order');
+    }
   }
 }

@@ -1,5 +1,3 @@
-import { PaymentMethod } from "./payment.model";
-
 export interface OrderItem {
   id: string;
   productId: string;
@@ -12,5 +10,9 @@ export interface Order {
   totalPrice: number;
   items: OrderItem[];
   couponId?: string;
-  paymentMethod: PaymentMethod;
+  paymentMethod: string;
+}
+
+export interface Coupon {
+  discount: number;
 }
